@@ -1,0 +1,9 @@
+[workspace]
+
+members = [
+  "vmc_common",
+  "vmc_server",
+  "vmc_ip_reporter",
+  "vmc_query",
+  "vmc_guest",
+]
