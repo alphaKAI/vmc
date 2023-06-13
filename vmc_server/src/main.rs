@@ -8,8 +8,10 @@ use std::{
     thread,
 };
 use vmc_common::{
-    CBResponse, MachineInfo, NSRequest, NSResponse, Request, Response, SerializedDataContainer,
+    CBResponse, ExecResponse, MachineInfo, NSRequest, NSResponse, Request, Response,
+    SerializedDataContainer,
 };
+use winrt_notification::Toast;
 
 use log::info;
 use std::env;
@@ -55,11 +57,13 @@ fn main() {
                 match sdc.to_serializable_data::<Request>().unwrap() {
                     Request::NameService(ns) => match ns {
                         NSRequest::Heartbeat(mi) => {
+                            info!("NSRequest::Heartbeat({mi:?})");
                             let mut mmap = mmap.lock().unwrap();
                             info!("New MachineInfo registered! : {:?}", &mi);
                             mmap.insert(mi.hostname, mi.ipaddr);
                         }
                         NSRequest::QueryIp(hostname) => {
+                            info!("NSRequest::QueryIp({hostname:?})");
                             let mmap = mmap.lock().unwrap();
                             let msg = Response::NameService(NSResponse::Ip(
                                 mmap.get(&hostname).map(|ipaddr| MachineInfo {
@@ -84,6 +88,7 @@ fn main() {
                                 .unwrap();
                         }
                         NSRequest::GetMachineList => {
+                            info!("NSRequest::GetMachineList");
                             let mut machines = vec![];
 
                             let mmap = mmap.lock().unwrap();
@@ -110,13 +115,13 @@ fn main() {
                     },
                     Request::ClipBoard(cb) => match cb {
                         vmc_common::CBRequest::SetClipboard(s) => {
-                            info!("Request SetClipboard");
+                            info!("CBRequest::SetClipboard({s})");
                             if cli_clipboard::set_contents(s).is_err() {
                                 eprintln!("Failed to set a data to ClipBoard.");
                             }
                         }
                         vmc_common::CBRequest::GetClipboard => {
-                            info!("Request GetClipboard");
+                            info!("CBRequest::GetClipboard");
 
                             let cb_content =
                                 cli_clipboard::get_contents().unwrap_or_else(|_| String::new());
@@ -134,6 +139,8 @@ fn main() {
                     },
                     Request::Execute(exec) => match exec {
                         vmc_common::ExecRequest::Execute(args) => {
+                            info!("ExecRequest::Execute({args:?})");
+
                             let mut cmd_args = vec!["/C", "start"];
                             for arg in args.iter() {
                                 cmd_args.push(arg.as_str());
@@ -145,12 +152,40 @@ fn main() {
                                 .expect("failed to execute process");
                         }
                         vmc_common::ExecRequest::Open(path) => {
+                            info!("ExecRequest::Open({path})");
                             let path = path.replace('/', "\\");
 
                             let _ = Command::new("cmd")
                                 .args(vec!["/C", "start", &path])
                                 .output()
                                 .expect("failed to execute process");
+                        }
+                        vmc_common::ExecRequest::GetEnvVar(key) => {
+                            info!("ExecRequest::GetEnvVar({key})");
+
+                            let val = env::var(key).ok();
+
+                            client
+                                .write_all(
+                                    &SerializedDataContainer::from_serializable_data(
+                                        &Response::Execute(ExecResponse::GetEnvVar(val)),
+                                    )
+                                    .unwrap()
+                                    .to_one_vec(),
+                                )
+                                .unwrap();
+                        }
+                    },
+                    Request::Notification(ntf) => match ntf {
+                        vmc_common::NTFRequest::Notification(title, body) => {
+                            info!("NTFRequest::Notification({title:?}, {body})");
+                            let title = title.unwrap_or("Notification".to_string());
+
+                            Toast::new(Toast::POWERSHELL_APP_ID)
+                                .title(&title)
+                                .text1(&body)
+                                .show()
+                                .expect("unable to toast");
                         }
                     },
                 }
@@ -161,4 +196,3 @@ fn main() {
         });
     }
 }
-

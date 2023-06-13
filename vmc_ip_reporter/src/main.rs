@@ -41,7 +41,7 @@ fn main() -> std::io::Result<()> {
     sock.set_verbosity(true);
 
     loop {
-        let (ipaddr, hostname) = (get_ipaddr("enp6s0").unwrap(), get_hostname().unwrap());
+        let (ipaddr, hostname) = (get_ipaddr("eth0").unwrap(), get_hostname().unwrap());
         let m = Request::NameService(NSRequest::Heartbeat(MachineInfo { hostname, ipaddr }));
         let sdc = SerializedDataContainer::from_serializable_data(&m).unwrap();
 

@@ -54,10 +54,17 @@ pub enum CBResponse {
 pub enum ExecRequest {
     Execute(Vec<String>),
     Open(String),
+    GetEnvVar(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ExecResponse {
+    GetEnvVar(Option<String>),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum NTFRequest {
+    Notification(Option<String>, String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -65,6 +72,7 @@ pub enum Request {
     NameService(NSRequest),
     ClipBoard(CBRequest),
     Execute(ExecRequest),
+    Notification(NTFRequest),
 }
 
 #[derive(Debug, Serialize, Deserialize)]

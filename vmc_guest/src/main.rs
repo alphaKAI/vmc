@@ -5,8 +5,8 @@ use std::path::Path;
 use std::{env, process::Command, str};
 use strum::{EnumIter, IntoEnumIterator};
 use vmc_common::{
-    AutoReConnectTcpStream, CBRequest, CBResponse, ExecRequest, Request, Response,
-    SerializedDataContainer, SERVER_HOST, SERVER_PORT,
+    AutoReConnectTcpStream, CBRequest, CBResponse, ExecRequest, NTFRequest, Request, Response,
+    SerializedDataContainer, SERVER_HOST, SERVER_PORT, ExecResponse,
 };
 
 const MOUNT_LIST_FILE: &str = ".mount_list.json";
@@ -138,6 +138,8 @@ fn main() -> std::io::Result<()> {
         Open,
         Help,
         ToWinPath,
+        GetEnvVar,
+        Notify,
     }
 
     let mode = if args.len() < 2 {
@@ -166,6 +168,18 @@ fn main() -> std::io::Result<()> {
                     panic!("{} command requires only one arg", args[1]);
                 }
                 Mode::ToWinPath
+            }
+            "get-env" => {
+                if args.len() != 3 {
+                    panic!("{} command requires only one arg", args[1]);
+                }
+                Mode::GetEnvVar
+            }
+            "notify" => {
+                if args.len() < 3 {
+                    panic!("{} command requires at least 1 arg", args[1]);
+                }
+                Mode::Notify
             }
             _ => {
                 eprintln!("Unkown command was given: {}", args[1]);
@@ -271,6 +285,38 @@ fn main() -> std::io::Result<()> {
             }
             return Ok(());
         }
+        Mode::GetEnvVar => {
+            let key = args[2].clone();
+
+            sock.write_all(
+                &SerializedDataContainer::from_serializable_data(&Request::Execute(
+                    ExecRequest::GetEnvVar(key),
+                ))
+                .unwrap()
+                .to_one_vec(),
+            )
+            .unwrap();
+
+            true
+        }
+        Mode::Notify => {
+            let (title, body) = if args.len() == 3 {
+                (None, args[2].clone())
+            } else {
+                (Some(args[2].clone()), args[3].clone())
+            };
+
+            sock.write_all(
+                &SerializedDataContainer::from_serializable_data(&Request::Notification(
+                    NTFRequest::Notification(title, body),
+                ))
+                .unwrap()
+                .to_one_vec(),
+            )
+            .unwrap();
+
+            false
+        }
     };
 
     if !recv_required {
@@ -282,6 +328,13 @@ fn main() -> std::io::Result<()> {
             Response::ClipBoard(cb_res) => match cb_res {
                 CBResponse::GetClipboard(s) => {
                     println!("{s}");
+                }
+            },
+            Response::Execute(exec_res) => match exec_res {
+                ExecResponse::GetEnvVar(ret) => {
+                    if let Some(ret) = ret {
+                        println!("{ret}");
+                    }
                 }
             },
             _ => todo!(),
