@@ -1,6 +1,9 @@
 #![feature(io_error_more)]
 use std::net::UdpSocket;
-use vmc_common::{NSResponse, Request, Response, SerializedDataContainer, SERVER_HOST, SERVER_PORT, NSRequest, CLIENT_QUERY_PORT};
+use vmc_common::{
+    NSRequest, NSResponse, Request, Response, SerializedDataContainer,
+    CLIENT_QUERY_PORT, SERVER_HOST, SERVER_PORT,
+};
 
 fn main() -> std::io::Result<()> {
     let client_addr = format!("0.0.0.0:{}", CLIENT_QUERY_PORT);
@@ -81,8 +84,8 @@ fn main() -> std::io::Result<()> {
                             println!("{} : {}", machine.hostname, machine.ipaddr);
                         }
                     }
-                },
-                _ => todo!()
+                }
+                _ => todo!(),
             }
         }
         Err(_) => {
