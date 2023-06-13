@@ -1,12 +1,11 @@
 #![feature(io_error_more)]
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
-use std::net::UdpSocket;
 use std::path::Path;
 use std::{env, process::Command, str};
 use strum::{EnumIter, IntoEnumIterator};
 use vmc_common::{
-    get_client_addr, CBRequest, CBResponse, ExecRequest, Request, Response,
+    AutoReConnectTcpStream, CBRequest, CBResponse, ExecRequest, Request, Response,
     SerializedDataContainer, SERVER_HOST, SERVER_PORT,
 };
 
@@ -124,11 +123,12 @@ fn is_sub_of_cifs_dir(dir: &str) -> bool {
 }
 
 fn main() -> std::io::Result<()> {
-    let client_addr = get_client_addr("0.0.0.0");
-
     let args: Vec<String> = std::env::args().collect();
 
-    let sock = UdpSocket::bind(client_addr)?;
+    let mut sock = AutoReConnectTcpStream::new(
+        format!("{SERVER_HOST}:{SERVER_PORT}"),
+        std::time::Duration::from_secs(5),
+    );
 
     #[derive(PartialEq, Debug, EnumIter)]
     enum Mode {
@@ -184,26 +184,24 @@ fn main() -> std::io::Result<()> {
 
             io::stdin().lock().read_to_string(&mut buf).unwrap();
 
-            sock.send_to(
+            sock.write_all(
                 &SerializedDataContainer::from_serializable_data(&Request::ClipBoard(
                     CBRequest::SetClipboard(buf),
                 ))
                 .unwrap()
                 .to_one_vec(),
-                format!("{}:{}", SERVER_HOST, SERVER_PORT),
             )
             .unwrap();
 
             false
         }
         Mode::ClipBoardGet => {
-            sock.send_to(
+            sock.write_all(
                 &SerializedDataContainer::from_serializable_data(&Request::ClipBoard(
                     CBRequest::GetClipboard,
                 ))
                 .unwrap()
                 .to_one_vec(),
-                format!("{}:{}", SERVER_HOST, SERVER_PORT),
             )
             .unwrap();
 
@@ -221,13 +219,12 @@ fn main() -> std::io::Result<()> {
                 }
             }
 
-            sock.send_to(
+            sock.write_all(
                 &SerializedDataContainer::from_serializable_data(&Request::Execute(
                     ExecRequest::Execute(cmd_args),
                 ))
                 .unwrap()
                 .to_one_vec(),
-                format!("{}:{}", SERVER_HOST, SERVER_PORT),
             )
             .unwrap();
 
@@ -239,13 +236,12 @@ fn main() -> std::io::Result<()> {
                 mount_list.and_then(|mount_list| mount_list.try_convert_to_remote_path(&arg));
 
             if let Some(path) = path {
-                sock.send_to(
+                sock.write_all(
                     &SerializedDataContainer::from_serializable_data(&Request::Execute(
                         ExecRequest::Open(path),
                     ))
                     .unwrap()
                     .to_one_vec(),
-                    format!("{}:{}", SERVER_HOST, SERVER_PORT),
                 )
                 .unwrap();
             } else {
@@ -271,7 +267,7 @@ fn main() -> std::io::Result<()> {
         Mode::Help => {
             println!("provided sub-commands:");
             for mode in Mode::iter() {
-                println!(" - {:?}", mode);
+                println!(" - {mode:?}");
             }
             return Ok(());
         }
@@ -281,25 +277,21 @@ fn main() -> std::io::Result<()> {
         return Ok(());
     }
 
-    let mut buf = [0u8; 1024];
-    match sock.recv_from(&mut buf) {
-        Ok((n, _)) => {
-            let sdc = SerializedDataContainer::from_one_vec(Vec::from(&buf[..n])).unwrap();
-            match sdc.to_serializable_data::<Response>().unwrap() {
-                Response::ClipBoard(cb_res) => match cb_res {
-                    CBResponse::GetClipboard(s) => {
-                        println!("{}", s);
-                    }
-                },
-                _ => todo!(),
-            }
+    if let Ok(sdc) = SerializedDataContainer::from_reader(&mut sock.stream) {
+        match sdc.to_serializable_data::<Response>().unwrap() {
+            Response::ClipBoard(cb_res) => match cb_res {
+                CBResponse::GetClipboard(s) => {
+                    println!("{s}");
+                }
+            },
+            _ => todo!(),
         }
-        Err(_) => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NetworkUnreachable,
-                "Failed to recv response from server",
-            ));
-        }
+    } else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NetworkUnreachable,
+            "Failed to recv response from server",
+        ));
     }
+
     Ok(())
 }

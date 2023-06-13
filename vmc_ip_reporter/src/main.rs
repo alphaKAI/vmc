@@ -1,16 +1,14 @@
-use std::net::UdpSocket;
 use std::{fs::File, io::prelude::*, path::Path};
 use std::{process::Command, str};
 use std::{thread, time};
 use vmc_common::{
-    MachineInfo, NSRequest, Request, SerializedDataContainer, CLIENT_REPORTER_PORT, SERVER_HOST,
-    SERVER_PORT,
+    MachineInfo, NSRequest, Request, SerializedDataContainer, SERVER_HOST, SERVER_PORT, AutoReConnectTcpStream,
 };
 
-fn get_ipaddr() -> Option<String> {
+fn get_ipaddr(eth_name: &str) -> Option<String> {
     let output = Command::new("sh")
         .arg("-c")
-        .arg("ip addr show dev eth0 | grep inet")
+        .arg(format!("ip addr show dev {eth_name} | grep inet"))
         .output()
         .expect("failed to execute process")
         .stdout;
@@ -38,20 +36,20 @@ fn get_hostname() -> Option<String> {
 }
 
 fn main() -> std::io::Result<()> {
-    let server_addr = format!("{}:{}", SERVER_HOST, SERVER_PORT);
-    let sock = UdpSocket::bind(format!("0.0.0.0:{}", CLIENT_REPORTER_PORT))?;
-
     let sleep_sec = time::Duration::from_secs(30);
+    let mut sock = AutoReConnectTcpStream::new(format!("{SERVER_HOST}:{SERVER_PORT}"), sleep_sec);
+    sock.set_verbosity(true);
 
     loop {
-        let (ipaddr, hostname) = (get_ipaddr().unwrap(), get_hostname().unwrap());
+        let (ipaddr, hostname) = (get_ipaddr("enp6s0").unwrap(), get_hostname().unwrap());
         let m = Request::NameService(NSRequest::Heartbeat(MachineInfo { hostname, ipaddr }));
         let sdc = SerializedDataContainer::from_serializable_data(&m).unwrap();
 
-        println!("Send heartbeat to server with {:?}", sdc);
+        println!("Send heartbeat to server with {sdc:?}");
 
-        sock.send_to(&sdc.to_one_vec(), &server_addr).unwrap();
+        sock.write_all(&sdc.to_one_vec()).unwrap();
 
         thread::sleep(sleep_sec);
     }
 }
+

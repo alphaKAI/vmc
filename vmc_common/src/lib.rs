@@ -1,6 +1,8 @@
 use serde::{Serialize, Deserialize};
 use rmp_serde::{self, Serializer};
-use std::io::Read;
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::thread;
 use std::{convert::TryInto, mem::size_of};
 use rand::prelude::*;
 
@@ -14,7 +16,7 @@ pub fn get_client_addr(client_ip: &str) -> String {
     let mut rng = rand::thread_rng();
     let port: u16 = rng.gen_range(CLIENT_PORT_BASE..CLIENT_PORT_MAX);
 
-    format!("{}:{}", client_ip, port)
+    format!("{client_ip}:{port}")
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -102,7 +104,6 @@ impl SerializedDataContainer {
         let mut size_buffer = [0; size_of::<usize>()];
         reader.read_exact(&mut size_buffer).and_then(|_| {
             let size = usize::from_le_bytes(size_buffer);
-            println!("size : {:?}", size);
             let mut data = vec![];
 
             reader.take(size as u64).read_to_end(&mut data)?;
@@ -144,3 +145,53 @@ impl SerializedDataContainer {
     }
 }
 
+#[derive(Debug)]
+pub struct AutoReConnectTcpStream {
+    host_info: String,
+    retry_interval: std::time::Duration,
+    pub stream: TcpStream,
+    verbose: bool,
+}
+
+impl AutoReConnectTcpStream {
+    pub fn new(host_info: String, retry_interval: std::time::Duration) -> Self {
+        let stream = Self::get_connection(&host_info, retry_interval, false);
+        Self {
+            host_info,
+            retry_interval,
+            stream,
+            verbose: false,
+        }
+    }
+
+    pub fn set_verbosity(&mut self, v: bool) {
+        self.verbose = v
+    }
+
+    fn get_connection(host_info: &str, retry_interval: std::time::Duration, verbose: bool) -> TcpStream {
+        loop {
+            if verbose {
+            println!("Connecting to {host_info} ...");}
+            if let Ok(new_sock) = TcpStream::connect(host_info) {
+                if verbose {
+                println!(" -> Connected!");
+                }
+                return new_sock;
+            } else {
+                println!(" -> Retry to connect after {retry_interval:?}");
+                thread::sleep(retry_interval);
+            }
+        }
+    }
+
+    pub fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        loop {
+            if self.stream.write_all(buf).is_err() {
+                self.stream = Self::get_connection(&self.host_info, self.retry_interval, self.verbose)
+            } else {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
