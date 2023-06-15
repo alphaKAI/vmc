@@ -1,8 +1,11 @@
+use std::fs::File;
+use std::io::Read;
+use std::path::Path;
 use std::{env, thread, time};
 use std::{process::Command, str};
 use vmc_common::{
     AutoReConnectTcpStream, MachineInfo, NSRequest, Request, SerializedDataContainer, ETH_NAME,
-    IP_PREFIX_LIST, SERVER_HOST, SERVER_PORT,
+    FALLBACK_HOST_NAME, IP_PREFIX_LIST, SERVER_HOST, SERVER_PORT,
 };
 
 fn get_ipaddr(eth_name: &str) -> Option<String> {
@@ -44,7 +47,20 @@ fn get_ipaddr(eth_name: &str) -> Option<String> {
 }
 
 fn get_hostname() -> Option<String> {
-    env::var("HOST").ok()
+    match env::var("HOST").ok() {
+        Some(hostname) => Some(hostname),
+        None => {
+            let path = Path::new("/etc/hostname");
+
+            if let Ok(mut file) = File::open(path) {
+                let mut s = String::new();
+                file.read_to_string(&mut s).unwrap();
+                return Some(s.trim().to_string());
+            }
+
+            Some(FALLBACK_HOST_NAME.to_string())
+        }
+    }
 }
 
 fn main() -> std::io::Result<()> {
