@@ -16,21 +16,36 @@ use winrt_notification::Toast;
 use log::info;
 use std::env;
 
+#[derive(Debug)]
+struct IpAddrPair {
+    pub ipv4_addr: String,
+    pub ipv6_addr: Option<String>,
+}
+
+impl IpAddrPair {
+    pub fn new(ipv4_addr: String, ipv6_addr: Option<String>) -> Self {
+        Self {
+            ipv4_addr,
+            ipv6_addr,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct MachineMap {
-    map: HashMap<String, String>,
+    map: HashMap<String, IpAddrPair>,
 }
 
 impl MachineMap {
-    fn insert(&mut self, hostname: String, ipaddr: String) {
-        self.map.insert(hostname, ipaddr);
+    fn insert(&mut self, hostname: String, ipaddr_pair: IpAddrPair) {
+        self.map.insert(hostname, ipaddr_pair);
     }
 
-    fn get(&self, hostname: &str) -> Option<&String> {
+    fn get(&self, hostname: &str) -> Option<&IpAddrPair> {
         self.map.get(hostname)
     }
 
-    fn iter(&self) -> std::collections::hash_map::Iter<String, String> {
+    fn iter(&self) -> std::collections::hash_map::Iter<String, IpAddrPair> {
         self.map.iter()
     }
 }
@@ -54,21 +69,23 @@ fn main() {
             info!("[{}] Data arrives from {:?}", Local::now(), client);
 
             if let Ok(sdc) = SerializedDataContainer::from_reader(&mut client) {
-                match sdc.to_serializable_data::<Request>().unwrap() {
+                let req = sdc.to_serializable_data::<Request>().unwrap();
+                match req {
                     Request::NameService(ns) => match ns {
                         NSRequest::Heartbeat(mi) => {
                             info!("NSRequest::Heartbeat({mi:?})");
                             let mut mmap = mmap.lock().unwrap();
                             info!("New MachineInfo registered! : {:?}", &mi);
-                            mmap.insert(mi.hostname, mi.ipaddr);
+                            mmap.insert(mi.hostname, IpAddrPair::new(mi.ipv4_addr, mi.ipv6_addr));
                         }
                         NSRequest::QueryIp(hostname) => {
                             info!("NSRequest::QueryIp({hostname:?})");
                             let mmap = mmap.lock().unwrap();
                             let msg = Response::NameService(NSResponse::Ip(
-                                mmap.get(&hostname).map(|ipaddr| MachineInfo {
+                                mmap.get(&hostname).map(|ipaddr_pair| MachineInfo {
                                     hostname: hostname.clone(),
-                                    ipaddr: ipaddr.clone(),
+                                    ipv4_addr: ipaddr_pair.ipv4_addr.clone(),
+                                    ipv6_addr: ipaddr_pair.ipv6_addr.clone(),
                                 }),
                             ));
                             info!("Queired from client: {:?}", msg);
@@ -76,9 +93,10 @@ fn main() {
                                 .write_all(
                                     &SerializedDataContainer::from_serializable_data(
                                         &Response::NameService(NSResponse::Ip(
-                                            mmap.get(&hostname).map(|ipaddr| MachineInfo {
+                                            mmap.get(&hostname).map(|ipaddr_pair| MachineInfo {
                                                 hostname,
-                                                ipaddr: ipaddr.clone(),
+                                                ipv4_addr: ipaddr_pair.ipv4_addr.clone(),
+                                                ipv6_addr: ipaddr_pair.ipv6_addr.clone(),
                                             }),
                                         )),
                                     )
@@ -95,7 +113,8 @@ fn main() {
                             for (k, v) in mmap.iter() {
                                 let mi = MachineInfo {
                                     hostname: k.to_string(),
-                                    ipaddr: v.to_string(),
+                                    ipv4_addr: v.ipv4_addr.to_string(),
+                                    ipv6_addr: v.ipv6_addr.clone(),
                                 };
                                 machines.push(mi);
                             }

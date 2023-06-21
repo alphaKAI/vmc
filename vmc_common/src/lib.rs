@@ -1,10 +1,10 @@
-use serde::{Serialize, Deserialize};
+use rand::prelude::*;
 use rmp_serde::{self, Serializer};
+use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::thread;
 use std::{convert::TryInto, mem::size_of};
-use rand::prelude::*;
 
 include!("SERVER_CONFIG.rs");
 pub const CLIENT_REPORTER_PORT: u16 = 54000;
@@ -19,10 +19,11 @@ pub fn get_client_addr(client_ip: &str) -> String {
     format!("{client_ip}:{port}")
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MachineInfo {
     pub hostname: String,
-    pub ipaddr: String,
+    pub ipv4_addr: String,
+    pub ipv6_addr: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -35,9 +36,8 @@ pub enum NSRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum NSResponse {
     Ip(Option<MachineInfo>),
-    MachineList(Vec<MachineInfo>)
+    MachineList(Vec<MachineInfo>),
 }
-
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum CBRequest {
@@ -176,13 +176,18 @@ impl AutoReConnectTcpStream {
         self.verbose = v
     }
 
-    fn get_connection(host_info: &str, retry_interval: std::time::Duration, verbose: bool) -> TcpStream {
+    fn get_connection(
+        host_info: &str,
+        retry_interval: std::time::Duration,
+        verbose: bool,
+    ) -> TcpStream {
         loop {
             if verbose {
-            println!("Connecting to {host_info} ...");}
+                println!("Connecting to {host_info} ...");
+            }
             if let Ok(new_sock) = TcpStream::connect(host_info) {
                 if verbose {
-                println!(" -> Connected!");
+                    println!(" -> Connected!");
                 }
                 return new_sock;
             } else {
@@ -195,7 +200,8 @@ impl AutoReConnectTcpStream {
     pub fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
         loop {
             if self.stream.write_all(buf).is_err() {
-                self.stream = Self::get_connection(&self.host_info, self.retry_interval, self.verbose)
+                self.stream =
+                    Self::get_connection(&self.host_info, self.retry_interval, self.verbose)
             } else {
                 break;
             }
@@ -203,3 +209,4 @@ impl AutoReConnectTcpStream {
         Ok(())
     }
 }
+

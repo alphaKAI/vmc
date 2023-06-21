@@ -4,11 +4,11 @@ use std::path::Path;
 use std::{env, thread, time};
 use std::{process::Command, str};
 use vmc_common::{
-    AutoReConnectTcpStream, MachineInfo, NSRequest, Request, SerializedDataContainer, ETH_NAME,
-    FALLBACK_HOST_NAME, IP_PREFIX_LIST, SERVER_HOST, SERVER_PORT,
+    AutoReConnectTcpStream, IPV4_PREFIX_LIST, IPV6_PREFIX, MachineInfo, NSRequest, Request,
+    SerializedDataContainer, ETH_NAME, FALLBACK_HOST_NAME, SERVER_HOST, SERVER_PORT,
 };
 
-fn get_ipaddr(eth_name: &str) -> Option<String> {
+fn get_ipv4addr(eth_name: &str) -> Option<String> {
     // iproute2
     let output = Command::new("sh")
         .arg("-c")
@@ -19,7 +19,7 @@ fn get_ipaddr(eth_name: &str) -> Option<String> {
     let output: Vec<_> = str::from_utf8(&output).unwrap().split(' ').collect();
 
     for e in &output {
-        for ip_prefix in IP_PREFIX_LIST.iter() {
+        for ip_prefix in IPV4_PREFIX_LIST.iter() {
             if e.starts_with(ip_prefix) {
                 return Some(e[0..e.len() - 3].to_string());
             }
@@ -36,10 +36,44 @@ fn get_ipaddr(eth_name: &str) -> Option<String> {
     let output: Vec<_> = str::from_utf8(&output).unwrap().split(' ').collect();
 
     for e in &output {
-        for ip_prefix in IP_PREFIX_LIST.iter() {
+        for ip_prefix in IPV4_PREFIX_LIST.iter() {
             if e.starts_with(ip_prefix) {
-                return Some(e[0..e.len() - 3].to_string());
+                return Some(e.to_string());
             }
+        }
+    }
+
+    None
+}
+
+fn get_ipv6addr(eth_name: &str) -> Option<String> {
+    // iproute2
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(format!("ip addr show dev {eth_name} | grep inet6"))
+        .output()
+        .expect("failed to execute process")
+        .stdout;
+    let output: Vec<_> = str::from_utf8(&output).unwrap().split(' ').collect();
+
+    for e in &output {
+        if e.starts_with(IPV6_PREFIX) {
+            return Some(e[0..e.len() - 3].to_string());
+        }
+    }
+
+    // ifconfig
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(format!("ifconfig {eth_name} | grep inet"))
+        .output()
+        .expect("failed to execute process")
+        .stdout;
+    let output: Vec<_> = str::from_utf8(&output).unwrap().split(' ').collect();
+
+    for e in &output {
+        if e.starts_with(IPV6_PREFIX) {
+            return Some(e.to_string());
         }
     }
 
@@ -69,8 +103,16 @@ fn main() -> std::io::Result<()> {
     sock.set_verbosity(true);
 
     loop {
-        let (ipaddr, hostname) = (get_ipaddr(ETH_NAME).unwrap(), get_hostname().unwrap());
-        let m = Request::NameService(NSRequest::Heartbeat(MachineInfo { hostname, ipaddr }));
+        let (hostname, ipv4_addr, ipv6_addr) = (
+            get_hostname().unwrap(),
+            get_ipv4addr(ETH_NAME).unwrap(),
+            get_ipv6addr(ETH_NAME),
+        );
+        let m = Request::NameService(NSRequest::Heartbeat(MachineInfo {
+            hostname,
+            ipv4_addr,
+            ipv6_addr,
+        }));
         let sdc = SerializedDataContainer::from_serializable_data(&m).unwrap();
 
         println!("Send heartbeat to server with {sdc:?}");
