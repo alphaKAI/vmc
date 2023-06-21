@@ -104,8 +104,8 @@ fn main() -> std::io::Result<()> {
 
     loop {
         let (hostname, ipv4_addr, ipv6_addr) = (
-            get_hostname().unwrap(),
-            get_ipv4addr(ETH_NAME).unwrap(),
+            get_hostname().expect("failed to get hostname"),
+            get_ipv4addr(ETH_NAME).expect("failed to get ipv4 addr"),
             get_ipv6addr(ETH_NAME),
         );
         let m = Request::NameService(NSRequest::Heartbeat(MachineInfo {
