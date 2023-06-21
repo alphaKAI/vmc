@@ -4,8 +4,8 @@ use std::path::Path;
 use std::{env, thread, time};
 use std::{process::Command, str};
 use vmc_common::{
-    AutoReConnectTcpStream, IPV4_PREFIX_LIST, IPV6_PREFIX, MachineInfo, NSRequest, Request,
-    SerializedDataContainer, ETH_NAME, FALLBACK_HOST_NAME, SERVER_HOST, SERVER_PORT,
+    AutoReConnectTcpStream, MachineInfo, NSRequest, Request, SerializedDataContainer, ETH_NAME,
+    FALLBACK_HOST_NAME, IPV4_PREFIX_LIST, IPV6_PREFIX, SERVER_HOST, SERVER_PORT,
 };
 
 fn get_ipv4addr(eth_name: &str) -> Option<String> {
