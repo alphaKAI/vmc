@@ -2,8 +2,29 @@
 use std::io::prelude::*;
 use std::net::TcpStream;
 use vmc_common::{
-    NSRequest, NSResponse, Request, Response, SerializedDataContainer, SERVER_HOST, SERVER_PORT,
+    protocol::{server_negotiation, NSRequest, NSResponse, Request, Response},
+    types::SerializedDataContainer,
+    SERVER_HOST, SERVER_PORT,
 };
+
+fn normalize_ipv6(ipv6_addr: &str) -> &str {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(idx) = ipv6_addr.find('%') {
+            &ipv6_addr.to_string()[..idx]
+        } else {
+            ipv6_addr
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if ipv6_addr.contains('%') {
+            ipv6_addr
+        } else {
+            panic!("on unix env, socpe_id(ifname) must be contained.")
+        }
+    }
+}
 
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -33,35 +54,43 @@ fn main() -> std::io::Result<()> {
         }
     };
 
-    let server_addr = format!("{SERVER_HOST}:{SERVER_PORT}");
-    let mut sock = TcpStream::connect(server_addr)?;
+    let mut server = TcpStream::connect(format!("{SERVER_HOST}:{SERVER_PORT}"))?;
+
+    if !server_negotiation(&mut server) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "protocol version mismatched",
+        ));
+    }
 
     match mode {
         Mode::QueryIPv4 | Mode::QueryIPv6 | Mode::QueryIpv6OrV4 => {
             let q_hostname = args[2].clone();
 
-            sock.write_all(
-                &SerializedDataContainer::from_serializable_data(&Request::NameService(
-                    NSRequest::QueryIp(q_hostname),
-                ))
-                .unwrap()
-                .to_one_vec(),
-            )
-            .unwrap();
+            server
+                .write_all(
+                    &SerializedDataContainer::from_serializable_data(&Request::NameService(
+                        NSRequest::QueryIp(q_hostname),
+                    ))
+                    .unwrap()
+                    .to_one_vec(),
+                )
+                .unwrap();
         }
         Mode::List => {
-            sock.write_all(
-                &SerializedDataContainer::from_serializable_data(&Request::NameService(
-                    NSRequest::GetMachineList,
-                ))
-                .unwrap()
-                .to_one_vec(),
-            )
-            .unwrap();
+            server
+                .write_all(
+                    &SerializedDataContainer::from_serializable_data(&Request::NameService(
+                        NSRequest::GetMachineList,
+                    ))
+                    .unwrap()
+                    .to_one_vec(),
+                )
+                .unwrap();
         }
     };
 
-    let sdc = SerializedDataContainer::from_reader(&mut sock).unwrap();
+    let sdc = SerializedDataContainer::from_reader(&mut server).unwrap();
     match sdc.to_serializable_data::<Response>().unwrap() {
         Response::NameService(ns_res) => match ns_res {
             NSResponse::Ip(ret) => {
@@ -71,10 +100,12 @@ fn main() -> std::io::Result<()> {
                         Mode::QueryIPv6 => println!(
                             "{}",
                             mi.ipv6_addr
+                                .map(|e| normalize_ipv6(&e).to_string())
                                 .expect("your queried host does not have an ipv6 addr.")
                         ),
                         Mode::QueryIpv6OrV4 => {
                             if let Some(ipv6_addr) = mi.ipv6_addr {
+                                let ipv6_addr = normalize_ipv6(&ipv6_addr);
                                 println!("{ipv6_addr}");
                             } else {
                                 println!("{}", mi.ipv4_addr);

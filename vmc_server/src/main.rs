@@ -7,9 +7,13 @@ use std::{
     sync::{Arc, Mutex},
     thread,
 };
+use vmc_common::protocol::calc_protocol_digest;
 use vmc_common::{
-    CBResponse, ExecResponse, MachineInfo, NSRequest, NSResponse, Request, Response,
-    SerializedDataContainer,
+    protocol::{
+        CBRequest, CBResponse, ExecRequest, ExecResponse, NSRequest, NSResponse, NTFRequest,
+        Request, Response,
+    },
+    types::{MachineInfo, SerializedDataContainer},
 };
 use winrt_notification::Toast;
 
@@ -65,152 +69,204 @@ fn main() {
     for client in server.incoming().flatten() {
         let mmap = mmap.clone();
         let mut client = client.try_clone().unwrap();
-        thread::spawn(move || loop {
-            info!("[{}] Data arrives from {:?}", Local::now(), client);
-
+        thread::spawn(move || {
             if let Ok(sdc) = SerializedDataContainer::from_reader(&mut client) {
                 let req = sdc.to_serializable_data::<Request>().unwrap();
-                match req {
-                    Request::NameService(ns) => match ns {
-                        NSRequest::Heartbeat(mi) => {
-                            info!("NSRequest::Heartbeat({mi:?})");
-                            let mut mmap = mmap.lock().unwrap();
-                            info!("New MachineInfo registered! : {:?}", &mi);
-                            mmap.insert(mi.hostname, IpAddrPair::new(mi.ipv4_addr, mi.ipv6_addr));
-                        }
-                        NSRequest::QueryIp(hostname) => {
-                            info!("NSRequest::QueryIp({hostname:?})");
-                            let mmap = mmap.lock().unwrap();
-                            let msg = Response::NameService(NSResponse::Ip(
-                                mmap.get(&hostname).map(|ipaddr_pair| MachineInfo {
-                                    hostname: hostname.clone(),
-                                    ipv4_addr: ipaddr_pair.ipv4_addr.clone(),
-                                    ipv6_addr: ipaddr_pair.ipv6_addr.clone(),
-                                }),
-                            ));
-                            info!("Queired from client: {:?}", msg);
-                            client
-                                .write_all(
-                                    &SerializedDataContainer::from_serializable_data(
-                                        &Response::NameService(NSResponse::Ip(
-                                            mmap.get(&hostname).map(|ipaddr_pair| MachineInfo {
-                                                hostname,
-                                                ipv4_addr: ipaddr_pair.ipv4_addr.clone(),
-                                                ipv6_addr: ipaddr_pair.ipv6_addr.clone(),
-                                            }),
-                                        )),
-                                    )
-                                    .unwrap()
-                                    .to_one_vec(),
-                                )
-                                .unwrap();
-                        }
-                        NSRequest::GetMachineList => {
-                            info!("NSRequest::GetMachineList");
-                            let mut machines = vec![];
+                if let Request::Negotiation(client_digesst) = req {
+                    let server_digest = calc_protocol_digest();
 
-                            let mmap = mmap.lock().unwrap();
-                            for (k, v) in mmap.iter() {
-                                let mi = MachineInfo {
-                                    hostname: k.to_string(),
-                                    ipv4_addr: v.ipv4_addr.to_string(),
-                                    ipv6_addr: v.ipv6_addr.clone(),
-                                };
-                                machines.push(mi);
-                            }
+                    let digest_match = client_digesst == server_digest;
 
-                            info!("Requst MachineList from client: {:?}", client);
+                    client
+                        .write_all(
+                            &SerializedDataContainer::from_serializable_data(
+                                &Response::NegotiationResult(digest_match),
+                            )
+                            .unwrap()
+                            .to_one_vec(),
+                        )
+                        .unwrap();
 
-                            client
-                                .write_all(
-                                    &SerializedDataContainer::from_serializable_data(
-                                        &Response::NameService(NSResponse::MachineList(machines)),
-                                    )
-                                    .unwrap()
-                                    .to_one_vec(),
-                                )
-                                .unwrap();
-                        }
-                    },
-                    Request::ClipBoard(cb) => match cb {
-                        vmc_common::CBRequest::SetClipboard(s) => {
-                            info!("CBRequest::SetClipboard({s})");
-                            if cli_clipboard::set_contents(s).is_err() {
-                                eprintln!("Failed to set a data to ClipBoard.");
-                            }
-                        }
-                        vmc_common::CBRequest::GetClipboard => {
-                            info!("CBRequest::GetClipboard");
-
-                            let cb_content =
-                                cli_clipboard::get_contents().unwrap_or_else(|_| String::new());
-
-                            client
-                                .write_all(
-                                    &SerializedDataContainer::from_serializable_data(
-                                        &Response::ClipBoard(CBResponse::GetClipboard(cb_content)),
-                                    )
-                                    .unwrap()
-                                    .to_one_vec(),
-                                )
-                                .unwrap();
-                        }
-                    },
-                    Request::Execute(exec) => match exec {
-                        vmc_common::ExecRequest::Execute(args) => {
-                            info!("ExecRequest::Execute({args:?})");
-
-                            let mut cmd_args = vec!["/C", "start"];
-                            for arg in args.iter() {
-                                cmd_args.push(arg.as_str());
-                            }
-
-                            let _ = Command::new("cmd")
-                                .args(cmd_args)
-                                .output()
-                                .expect("failed to execute process");
-                        }
-                        vmc_common::ExecRequest::Open(path) => {
-                            info!("ExecRequest::Open({path})");
-                            let path = path.replace('/', "\\");
-
-                            let _ = Command::new("cmd")
-                                .args(vec!["/C", "start", &path])
-                                .output()
-                                .expect("failed to execute process");
-                        }
-                        vmc_common::ExecRequest::GetEnvVar(key) => {
-                            info!("ExecRequest::GetEnvVar({key})");
-
-                            let val = env::var(key).ok();
-
-                            client
-                                .write_all(
-                                    &SerializedDataContainer::from_serializable_data(
-                                        &Response::Execute(ExecResponse::GetEnvVar(val)),
-                                    )
-                                    .unwrap()
-                                    .to_one_vec(),
-                                )
-                                .unwrap();
-                        }
-                    },
-                    Request::Notification(ntf) => match ntf {
-                        vmc_common::NTFRequest::Notification(title, body) => {
-                            info!("NTFRequest::Notification({title:?}, {body})");
-                            let title = title.unwrap_or("Notification".to_string());
-
-                            Toast::new(Toast::POWERSHELL_APP_ID)
-                                .title(&title)
-                                .text1(&body)
-                                .show()
-                                .expect("unable to toast");
-                        }
-                    },
+                    if !digest_match {
+                        info!("version mismatched.");
+                        return;
+                    }
+                } else {
+                    info!("Wrong connection. client must send an negotiation packet at first.");
+                    return;
                 }
             } else {
-                info!("Connection closed.");
+                println!("Connection closed.");
                 return;
+            }
+
+            loop {
+                info!("[{}] Data arrives from {:?}", Local::now(), client);
+
+                if let Ok(sdc) = SerializedDataContainer::from_reader(&mut client) {
+                    let req = sdc.to_serializable_data::<Request>().unwrap();
+                    match req {
+                        Request::Negotiation(_) => {
+                            client
+                                .write_all(
+                                    &SerializedDataContainer::from_serializable_data(
+                                        &Response::NegotiationResult(true),
+                                    )
+                                    .unwrap()
+                                    .to_one_vec(),
+                                )
+                                .unwrap();
+                        }
+                        Request::NameService(ns) => match ns {
+                            NSRequest::Heartbeat(mi) => {
+                                info!("NSRequest::Heartbeat({mi:?})");
+                                let mut mmap = mmap.lock().unwrap();
+                                info!("New MachineInfo registered! : {:?}", &mi);
+                                mmap.insert(
+                                    mi.hostname,
+                                    IpAddrPair::new(mi.ipv4_addr, mi.ipv6_addr),
+                                );
+                            }
+                            NSRequest::QueryIp(hostname) => {
+                                info!("NSRequest::QueryIp({hostname:?})");
+                                let mmap = mmap.lock().unwrap();
+                                let msg = Response::NameService(NSResponse::Ip(
+                                    mmap.get(&hostname).map(|ipaddr_pair| MachineInfo {
+                                        hostname: hostname.clone(),
+                                        ipv4_addr: ipaddr_pair.ipv4_addr.clone(),
+                                        ipv6_addr: ipaddr_pair.ipv6_addr.clone(),
+                                    }),
+                                ));
+                                info!("Queired from client: {:?}", msg);
+                                client
+                                    .write_all(
+                                        &SerializedDataContainer::from_serializable_data(
+                                            &Response::NameService(NSResponse::Ip(
+                                                mmap.get(&hostname).map(|ipaddr_pair| {
+                                                    MachineInfo {
+                                                        hostname,
+                                                        ipv4_addr: ipaddr_pair.ipv4_addr.clone(),
+                                                        ipv6_addr: ipaddr_pair.ipv6_addr.clone(),
+                                                    }
+                                                }),
+                                            )),
+                                        )
+                                        .unwrap()
+                                        .to_one_vec(),
+                                    )
+                                    .unwrap();
+                            }
+                            NSRequest::GetMachineList => {
+                                info!("NSRequest::GetMachineList");
+                                let mut machines = vec![];
+
+                                let mmap = mmap.lock().unwrap();
+                                for (k, v) in mmap.iter() {
+                                    let mi = MachineInfo {
+                                        hostname: k.to_string(),
+                                        ipv4_addr: v.ipv4_addr.to_string(),
+                                        ipv6_addr: v.ipv6_addr.clone(),
+                                    };
+                                    machines.push(mi);
+                                }
+
+                                info!("Requst MachineList from client: {:?}", client);
+
+                                client
+                                    .write_all(
+                                        &SerializedDataContainer::from_serializable_data(
+                                            &Response::NameService(NSResponse::MachineList(
+                                                machines,
+                                            )),
+                                        )
+                                        .unwrap()
+                                        .to_one_vec(),
+                                    )
+                                    .unwrap();
+                            }
+                        },
+                        Request::ClipBoard(cb) => match cb {
+                            CBRequest::SetClipboard(s) => {
+                                info!("CBRequest::SetClipboard({s})");
+                                if cli_clipboard::set_contents(s).is_err() {
+                                    eprintln!("Failed to set a data to ClipBoard.");
+                                }
+                            }
+                            CBRequest::GetClipboard => {
+                                info!("CBRequest::GetClipboard");
+
+                                let cb_content =
+                                    cli_clipboard::get_contents().unwrap_or_else(|_| String::new());
+
+                                client
+                                    .write_all(
+                                        &SerializedDataContainer::from_serializable_data(
+                                            &Response::ClipBoard(CBResponse::GetClipboard(
+                                                cb_content,
+                                            )),
+                                        )
+                                        .unwrap()
+                                        .to_one_vec(),
+                                    )
+                                    .unwrap();
+                            }
+                        },
+                        Request::Execute(exec) => match exec {
+                            ExecRequest::Execute(args) => {
+                                info!("ExecRequest::Execute({args:?})");
+
+                                let mut cmd_args = vec!["/C", "start"];
+                                for arg in args.iter() {
+                                    cmd_args.push(arg.as_str());
+                                }
+
+                                let _ = Command::new("cmd")
+                                    .args(cmd_args)
+                                    .output()
+                                    .expect("failed to execute process");
+                            }
+                            ExecRequest::Open(path) => {
+                                info!("ExecRequest::Open({path})");
+                                let path = path.replace('/', "\\");
+
+                                let _ = Command::new("cmd")
+                                    .args(vec!["/C", "start", &path])
+                                    .output()
+                                    .expect("failed to execute process");
+                            }
+                            ExecRequest::GetEnvVar(key) => {
+                                info!("ExecRequest::GetEnvVar({key})");
+
+                                let val = env::var(key).ok();
+
+                                client
+                                    .write_all(
+                                        &SerializedDataContainer::from_serializable_data(
+                                            &Response::Execute(ExecResponse::GetEnvVar(val)),
+                                        )
+                                        .unwrap()
+                                        .to_one_vec(),
+                                    )
+                                    .unwrap();
+                            }
+                        },
+                        Request::Notification(ntf) => match ntf {
+                            NTFRequest::Notification(title, body) => {
+                                info!("NTFRequest::Notification({title:?}, {body})");
+                                let title = title.unwrap_or("Notification".to_string());
+
+                                Toast::new(Toast::POWERSHELL_APP_ID)
+                                    .title(&title)
+                                    .text1(&body)
+                                    .show()
+                                    .expect("unable to toast");
+                            }
+                        },
+                    }
+                } else {
+                    info!("Connection closed.");
+                    return;
+                }
             }
         });
     }

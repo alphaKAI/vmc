@@ -1,12 +1,14 @@
 #![feature(io_error_more)]
 use serde::{Deserialize, Serialize};
+use vmc_common::protocol::server_negotiation;
 use std::io::{self, Read};
 use std::path::Path;
 use std::{env, process::Command, str};
 use strum::{EnumIter, IntoEnumIterator};
 use vmc_common::{
-    AutoReConnectTcpStream, CBRequest, CBResponse, ExecRequest, NTFRequest, Request, Response,
-    SerializedDataContainer, SERVER_HOST, SERVER_PORT, ExecResponse,
+    protocol::{CBRequest, CBResponse, ExecRequest, ExecResponse, NTFRequest, Request, Response},
+    types::{AutoReConnectTcpStream, SerializedDataContainer},
+    SERVER_HOST, SERVER_PORT,
 };
 
 const MOUNT_LIST_FILE: &str = ".mount_list.json";
@@ -125,10 +127,17 @@ fn is_sub_of_cifs_dir(dir: &str) -> bool {
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
-    let mut sock = AutoReConnectTcpStream::new(
+    let mut server = AutoReConnectTcpStream::new(
         format!("{SERVER_HOST}:{SERVER_PORT}"),
         std::time::Duration::from_secs(5),
     );
+
+    if !server_negotiation(&mut server.stream) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "protocol version mismatched",
+        ));
+    }
 
     #[derive(PartialEq, Debug, EnumIter)]
     enum Mode {
@@ -198,7 +207,7 @@ fn main() -> std::io::Result<()> {
 
             io::stdin().lock().read_to_string(&mut buf).unwrap();
 
-            sock.write_all(
+            server.write_all(
                 &SerializedDataContainer::from_serializable_data(&Request::ClipBoard(
                     CBRequest::SetClipboard(buf),
                 ))
@@ -210,7 +219,7 @@ fn main() -> std::io::Result<()> {
             false
         }
         Mode::ClipBoardGet => {
-            sock.write_all(
+            server.write_all(
                 &SerializedDataContainer::from_serializable_data(&Request::ClipBoard(
                     CBRequest::GetClipboard,
                 ))
@@ -233,7 +242,7 @@ fn main() -> std::io::Result<()> {
                 }
             }
 
-            sock.write_all(
+            server.write_all(
                 &SerializedDataContainer::from_serializable_data(&Request::Execute(
                     ExecRequest::Execute(cmd_args),
                 ))
@@ -250,7 +259,7 @@ fn main() -> std::io::Result<()> {
                 mount_list.and_then(|mount_list| mount_list.try_convert_to_remote_path(&arg));
 
             if let Some(path) = path {
-                sock.write_all(
+                server.write_all(
                     &SerializedDataContainer::from_serializable_data(&Request::Execute(
                         ExecRequest::Open(path),
                     ))
@@ -288,7 +297,7 @@ fn main() -> std::io::Result<()> {
         Mode::GetEnvVar => {
             let key = args[2].clone();
 
-            sock.write_all(
+            server.write_all(
                 &SerializedDataContainer::from_serializable_data(&Request::Execute(
                     ExecRequest::GetEnvVar(key),
                 ))
@@ -306,7 +315,7 @@ fn main() -> std::io::Result<()> {
                 (Some(args[2].clone()), args[3].clone())
             };
 
-            sock.write_all(
+            server.write_all(
                 &SerializedDataContainer::from_serializable_data(&Request::Notification(
                     NTFRequest::Notification(title, body),
                 ))
@@ -323,7 +332,7 @@ fn main() -> std::io::Result<()> {
         return Ok(());
     }
 
-    if let Ok(sdc) = SerializedDataContainer::from_reader(&mut sock.stream) {
+    if let Ok(sdc) = SerializedDataContainer::from_reader(&mut server.stream) {
         match sdc.to_serializable_data::<Response>().unwrap() {
             Response::ClipBoard(cb_res) => match cb_res {
                 CBResponse::GetClipboard(s) => {

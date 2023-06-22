@@ -3,9 +3,11 @@ use std::io::Read;
 use std::path::Path;
 use std::{env, thread, time};
 use std::{process::Command, str};
+use vmc_common::protocol::server_negotiation;
 use vmc_common::{
-    AutoReConnectTcpStream, MachineInfo, NSRequest, Request, SerializedDataContainer, ETH_NAME,
-    FALLBACK_HOST_NAME, IPV4_PREFIX_LIST, IPV6_PREFIX, SERVER_HOST, SERVER_PORT,
+    protocol::{NSRequest, Request},
+    types::{AutoReConnectTcpStream, MachineInfo, SerializedDataContainer},
+    ETH_NAME, FALLBACK_HOST_NAME, IPV4_PREFIX_LIST, IPV6_PREFIX, SERVER_HOST, SERVER_PORT,
 };
 
 fn get_ipv4addr(eth_name: &str) -> Option<String> {
@@ -58,7 +60,7 @@ fn get_ipv6addr(eth_name: &str) -> Option<String> {
 
     for e in &output {
         if e.starts_with(IPV6_PREFIX) {
-            return Some(e[0..e.len() - 3].to_string());
+            return Some(format!("{}%{eth_name}", e[0..e.len() - 3].to_string()));
         }
     }
 
@@ -99,8 +101,15 @@ fn get_hostname() -> Option<String> {
 
 fn main() -> std::io::Result<()> {
     let sleep_sec = time::Duration::from_secs(30);
-    let mut sock = AutoReConnectTcpStream::new(format!("{SERVER_HOST}:{SERVER_PORT}"), sleep_sec);
-    sock.set_verbosity(true);
+    let mut server = AutoReConnectTcpStream::new(format!("{SERVER_HOST}:{SERVER_PORT}"), sleep_sec);
+    server.set_verbosity(true);
+
+    if !server_negotiation(&mut server.stream) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "protocol version mismatched",
+        ));
+    }
 
     loop {
         let (hostname, ipv4_addr, ipv6_addr) = (
@@ -117,7 +126,7 @@ fn main() -> std::io::Result<()> {
 
         println!("Send heartbeat to server with {sdc:?}");
 
-        sock.write_all(&sdc.to_one_vec()).unwrap();
+        server.write_all(&sdc.to_one_vec()).unwrap();
 
         thread::sleep(sleep_sec);
     }
