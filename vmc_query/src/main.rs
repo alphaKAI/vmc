@@ -7,19 +7,19 @@ use vmc_common::{
     SERVER_HOST, SERVER_PORT,
 };
 
-fn normalize_ipv6(ipv6_addr: &str) -> &str {
+fn normalize_ipv6(ipv6_addr: &str) -> String {
     #[cfg(target_os = "windows")]
     {
         if let Some(idx) = ipv6_addr.find('%') {
-            &ipv6_addr.to_string()[..idx]
+            ipv6_addr[..idx].to_string()
         } else {
-            ipv6_addr
+            ipv6_addr.to_string()
         }
     }
     #[cfg(not(target_os = "windows"))]
     {
         if ipv6_addr.contains('%') {
-            ipv6_addr
+            ipv6_addr.to_string()
         } else {
             panic!("on unix env, socpe_id(ifname) must be contained.")
         }
@@ -100,7 +100,7 @@ fn main() -> std::io::Result<()> {
                         Mode::QueryIPv6 => println!(
                             "{}",
                             mi.ipv6_addr
-                                .map(|e| normalize_ipv6(&e).to_string())
+                                .map(|e| normalize_ipv6(&e))
                                 .expect("your queried host does not have an ipv6 addr.")
                         ),
                         Mode::QueryIpv6OrV4 => {
