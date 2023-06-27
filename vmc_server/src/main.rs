@@ -101,7 +101,7 @@ fn main() {
                         return;
                     }
                 } else {
-                    info!("Wrong connection. client must send an negotiation packet at first.");
+                    info!("Wrong connection. client must send an negotiation packet at first. given req is: {req:?}");
                     return;
                 }
             } else {
