@@ -83,22 +83,32 @@ impl SerializedDataContainer {
     }
 }
 
-#[derive(Debug)]
 pub struct AutoReConnectTcpStream {
     host_info: String,
     retry_interval: std::time::Duration,
     pub stream: TcpStream,
     verbose: bool,
+    reconnect_callback: Option<Box<dyn Fn(TcpStream)>>,
 }
 
 impl AutoReConnectTcpStream {
-    pub fn new(host_info: String, retry_interval: std::time::Duration) -> Self {
-        let stream = Self::get_connection(&host_info, retry_interval, false);
+    pub fn new(
+        host_info: String,
+        retry_interval: std::time::Duration,
+        reconnect_callback: Option<Box<dyn Fn(TcpStream)>>,
+    ) -> Self {
+        let stream = Self::get_connection(
+            &host_info,
+            retry_interval,
+            false,
+            reconnect_callback.as_ref(),
+        );
         Self {
             host_info,
             retry_interval,
             stream,
             verbose: false,
+            reconnect_callback,
         }
     }
 
@@ -110,6 +120,7 @@ impl AutoReConnectTcpStream {
         host_info: &str,
         retry_interval: std::time::Duration,
         verbose: bool,
+        reconnect_callback: Option<&Box<dyn Fn(TcpStream)>>,
     ) -> TcpStream {
         loop {
             if verbose {
@@ -118,6 +129,9 @@ impl AutoReConnectTcpStream {
             if let Ok(new_sock) = TcpStream::connect(host_info) {
                 if verbose {
                     println!(" -> Connected!");
+                    if let Some(cb) = reconnect_callback {
+                        cb(new_sock.try_clone().unwrap());
+                    }
                 }
                 return new_sock;
             } else {
@@ -130,8 +144,12 @@ impl AutoReConnectTcpStream {
     pub fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
         loop {
             if self.stream.write_all(buf).is_err() {
-                self.stream =
-                    Self::get_connection(&self.host_info, self.retry_interval, self.verbose)
+                self.stream = Self::get_connection(
+                    &self.host_info,
+                    self.retry_interval,
+                    self.verbose,
+                    self.reconnect_callback.as_ref(),
+                )
             } else {
                 break;
             }

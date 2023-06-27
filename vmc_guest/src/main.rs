@@ -130,6 +130,7 @@ fn main() -> std::io::Result<()> {
     let mut server = AutoReConnectTcpStream::new(
         format!("{SERVER_HOST}:{SERVER_PORT}"),
         std::time::Duration::from_secs(5),
+        None,
     );
 
     if !server_negotiation(&mut server.stream) {

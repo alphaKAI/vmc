@@ -1,8 +1,9 @@
 use std::fs::File;
 use std::io::Read;
+use std::net::TcpStream;
 use std::path::Path;
-use std::{thread, time};
 use std::{process::Command, str};
+use std::{thread, time};
 use vmc_common::protocol::server_negotiation;
 use vmc_common::types::PortforwardList;
 use vmc_common::{
@@ -110,7 +111,17 @@ fn get_port_forward_list() -> PortforwardList {
 
 fn main() -> std::io::Result<()> {
     let sleep_sec = time::Duration::from_secs(30);
-    let mut server = AutoReConnectTcpStream::new(format!("{SERVER_HOST}:{SERVER_PORT}"), sleep_sec);
+    let mut server = AutoReConnectTcpStream::new(
+        format!("{SERVER_HOST}:{SERVER_PORT}"),
+        sleep_sec,
+        Some(Box::new(
+            |mut stream: TcpStream| {
+                if !server_negotiation(&mut stream) {
+                    panic!("protocol version mismatched");
+                }
+            },
+        )),
+    );
     server.set_verbosity(true);
 
     if !server_negotiation(&mut server.stream) {
