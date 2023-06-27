@@ -1,9 +1,9 @@
+use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
 use std::fs::File;
 use std::io::Read;
 use std::net::TcpStream;
 use std::path::Path;
-use std::{process::Command, str};
-use std::{thread, time};
+use std::{str, thread, time};
 use vmc_common::protocol::server_negotiation;
 use vmc_common::types::PortforwardList;
 use vmc_common::{
@@ -18,36 +18,19 @@ static PORT_FORWARD_FILE_PATH: &str = "/etc/vmc_port_forward.json";
 static PORT_FORWARD_FILE_PATH: &str = "C:\\etc\\vmc_port_forward.json";
 
 fn get_ipv4addr(eth_name: &str) -> Option<String> {
-    // iproute2
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(format!("ip addr show dev {eth_name} | grep inet"))
-        .output()
-        .expect("failed to execute process")
-        .stdout;
-    let output: Vec<_> = str::from_utf8(&output).unwrap().split(' ').collect();
+    let network_interfaces = NetworkInterface::show().unwrap();
 
-    for e in &output {
-        for ip_prefix in IPV4_PREFIX_LIST.iter() {
-            if e.starts_with(ip_prefix) {
-                return Some(e[0..e.len() - 3].to_string());
-            }
-        }
-    }
-
-    // ifconfig
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(format!("ifconfig {eth_name} | grep inet"))
-        .output()
-        .expect("failed to execute process")
-        .stdout;
-    let output: Vec<_> = str::from_utf8(&output).unwrap().split(' ').collect();
-
-    for e in &output {
-        for ip_prefix in IPV4_PREFIX_LIST.iter() {
-            if e.starts_with(ip_prefix) {
-                return Some(e.to_string());
+    for itf in network_interfaces.iter() {
+        if itf.name == eth_name {
+            for addr in itf.addr.iter() {
+                if let Addr::V4(ipv4_addr) = addr {
+                    let ipv4_addr = &ipv4_addr.ip.to_string();
+                    for ip_prefix in IPV4_PREFIX_LIST.iter() {
+                        if ipv4_addr.starts_with(ip_prefix) {
+                            return Some(ipv4_addr.clone());
+                        }
+                    }
+                }
             }
         }
     }
@@ -56,33 +39,18 @@ fn get_ipv4addr(eth_name: &str) -> Option<String> {
 }
 
 fn get_ipv6addr(eth_name: &str) -> Option<String> {
-    // iproute2
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(format!("ip addr show dev {eth_name} | grep inet6"))
-        .output()
-        .expect("failed to execute process")
-        .stdout;
-    let output: Vec<_> = str::from_utf8(&output).unwrap().split(' ').collect();
+    let network_interfaces = NetworkInterface::show().unwrap();
 
-    for e in &output {
-        if e.starts_with(IPV6_PREFIX) {
-            return Some(format!("{}%{eth_name}", e[0..e.len() - 3].to_string()));
-        }
-    }
-
-    // ifconfig
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(format!("ifconfig {eth_name} | grep inet"))
-        .output()
-        .expect("failed to execute process")
-        .stdout;
-    let output: Vec<_> = str::from_utf8(&output).unwrap().split(' ').collect();
-
-    for e in &output {
-        if e.starts_with(IPV6_PREFIX) {
-            return Some(e.to_string());
+    for itf in network_interfaces.iter() {
+        if itf.name == eth_name {
+            for addr in itf.addr.iter() {
+                if let Addr::V6(ipv6_addr) = addr {
+                    let ipv6_addr = &ipv6_addr.ip.to_string();
+                    if ipv6_addr.starts_with(IPV6_PREFIX) {
+                        return Some(format!("{ipv6_addr}%{eth_name}"));
+                    }
+                }
+            }
         }
     }
 
@@ -114,13 +82,11 @@ fn main() -> std::io::Result<()> {
     let mut server = AutoReConnectTcpStream::new(
         format!("{SERVER_HOST}:{SERVER_PORT}"),
         sleep_sec,
-        Some(Box::new(
-            |mut stream: TcpStream| {
-                if !server_negotiation(&mut stream) {
-                    panic!("protocol version mismatched");
-                }
-            },
-        )),
+        Some(Box::new(|mut stream: TcpStream| {
+            if !server_negotiation(&mut stream) {
+                panic!("protocol version mismatched");
+            }
+        })),
     );
     server.set_verbosity(true);
 
