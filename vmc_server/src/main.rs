@@ -1,3 +1,5 @@
+pub mod port_forward;
+
 use chrono::Local;
 use std::io::prelude::*;
 use std::{
@@ -8,6 +10,7 @@ use std::{
     thread,
 };
 use vmc_common::protocol::calc_protocol_digest;
+use vmc_common::types::PortforwardList;
 use vmc_common::{
     protocol::{
         CBRequest, CBResponse, ExecRequest, ExecResponse, NSRequest, NSResponse, NTFRequest,
@@ -19,6 +22,8 @@ use winrt_notification::Toast;
 
 use log::info;
 use std::env;
+
+use crate::port_forward::spawn_new_port_forward_thread;
 
 #[derive(Debug)]
 struct IpAddrPair {
@@ -66,9 +71,13 @@ fn main() {
 
     let mmap = Arc::new(Mutex::new(MachineMap::default()));
 
+    let forward_map: Arc<Mutex<HashMap<String, PortforwardList>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+
     for client in server.incoming().flatten() {
         let mmap = mmap.clone();
         let mut client = client.try_clone().unwrap();
+        let forward_map = forward_map.clone();
         thread::spawn(move || {
             if let Ok(sdc) = SerializedDataContainer::from_reader(&mut client) {
                 let req = sdc.to_serializable_data::<Request>().unwrap();
@@ -118,14 +127,36 @@ fn main() {
                                 .unwrap();
                         }
                         Request::NameService(ns) => match ns {
-                            NSRequest::Heartbeat(mi) => {
-                                info!("NSRequest::Heartbeat({mi:?})");
+                            NSRequest::Heartbeat(mi, given_forward_list) => {
+                                info!("NSRequest::Heartbeat({mi:?}, {given_forward_list:?})");
                                 let mut mmap = mmap.lock().unwrap();
                                 info!("New MachineInfo registered! : {:?}", &mi);
                                 mmap.insert(
-                                    mi.hostname,
-                                    IpAddrPair::new(mi.ipv4_addr, mi.ipv6_addr),
+                                    mi.hostname.clone(),
+                                    IpAddrPair::new(mi.ipv4_addr.clone(), mi.ipv6_addr),
                                 );
+
+                                let new_forward_list = {
+                                    let mut forward_map = forward_map
+                                        .lock()
+                                        .expect("failed to aquire lock of forward_map");
+                                    if !forward_map.contains_key(&mi.hostname) {
+                                        forward_map.insert(
+                                            mi.hostname.clone(),
+                                            PortforwardList::new(vec![]),
+                                        );
+                                    }
+                                    let forward_list = forward_map.get_mut(&mi.hostname).unwrap();
+                                    forward_list.merge_elem(&given_forward_list)
+                                };
+
+                                for forward in new_forward_list.iter() {
+                                    let src_port = forward.host_port;
+                                    let dst_ip = mi.ipv4_addr.clone();
+                                    let dst_port = forward.guest_port;
+
+                                    spawn_new_port_forward_thread(src_port, dst_ip, dst_port);
+                                }
                             }
                             NSRequest::QueryIp(hostname) => {
                                 info!("NSRequest::QueryIp({hostname:?})");

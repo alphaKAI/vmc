@@ -1,12 +1,12 @@
 use std::{io::Write, net::TcpStream};
 
-use crate::types::{MachineInfo, SerializedDataContainer};
+use crate::types::{MachineInfo, PortforwardList, SerializedDataContainer};
 use ring::digest::{Context, SHA256};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum NSRequest {
-    Heartbeat(MachineInfo),
+    Heartbeat(MachineInfo, PortforwardList),
     QueryIp(String),
     GetMachineList,
 }

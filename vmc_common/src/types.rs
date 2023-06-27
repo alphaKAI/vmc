@@ -139,3 +139,56 @@ impl AutoReConnectTcpStream {
         Ok(())
     }
 }
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+pub struct PortforwardSpec {
+    pub host_port: u16,
+    pub guest_port: u16,
+}
+
+impl PortforwardSpec {
+    pub fn new(host_port: u16, guest_port: u16) -> Self {
+        Self {
+            host_port,
+            guest_port,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PortforwardList {
+    pub forwards: Vec<PortforwardSpec>,
+}
+
+impl PortforwardList {
+    pub fn new(forwards: Vec<PortforwardSpec>) -> Self {
+        Self { forwards }
+    }
+
+    pub fn has_elem(&self, forward: &PortforwardSpec) -> bool {
+        for t_forward in self.forwards.iter() {
+            if *t_forward == *forward {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    pub fn append_elem(&mut self, forward: PortforwardSpec) {
+        self.forwards.push(forward);
+    }
+
+    pub fn merge_elem(&mut self, forward_list: &PortforwardList) -> Vec<PortforwardSpec> {
+        let mut ret = vec![];
+
+        for forward in forward_list.forwards.iter() {
+            if !self.has_elem(forward) {
+                self.append_elem(forward.clone());
+                ret.push(forward.clone());
+            }
+        }
+
+        ret
+    }
+}

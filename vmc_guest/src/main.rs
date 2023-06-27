@@ -1,10 +1,10 @@
 #![feature(io_error_more)]
 use serde::{Deserialize, Serialize};
-use vmc_common::protocol::server_negotiation;
 use std::io::{self, Read};
 use std::path::Path;
 use std::{env, process::Command, str};
 use strum::{EnumIter, IntoEnumIterator};
+use vmc_common::protocol::server_negotiation;
 use vmc_common::{
     protocol::{CBRequest, CBResponse, ExecRequest, ExecResponse, NTFRequest, Request, Response},
     types::{AutoReConnectTcpStream, SerializedDataContainer},
@@ -207,26 +207,28 @@ fn main() -> std::io::Result<()> {
 
             io::stdin().lock().read_to_string(&mut buf).unwrap();
 
-            server.write_all(
-                &SerializedDataContainer::from_serializable_data(&Request::ClipBoard(
-                    CBRequest::SetClipboard(buf),
-                ))
-                .unwrap()
-                .to_one_vec(),
-            )
-            .unwrap();
+            server
+                .write_all(
+                    &SerializedDataContainer::from_serializable_data(&Request::ClipBoard(
+                        CBRequest::SetClipboard(buf),
+                    ))
+                    .unwrap()
+                    .to_one_vec(),
+                )
+                .unwrap();
 
             false
         }
         Mode::ClipBoardGet => {
-            server.write_all(
-                &SerializedDataContainer::from_serializable_data(&Request::ClipBoard(
-                    CBRequest::GetClipboard,
-                ))
-                .unwrap()
-                .to_one_vec(),
-            )
-            .unwrap();
+            server
+                .write_all(
+                    &SerializedDataContainer::from_serializable_data(&Request::ClipBoard(
+                        CBRequest::GetClipboard,
+                    ))
+                    .unwrap()
+                    .to_one_vec(),
+                )
+                .unwrap();
 
             true
         }
@@ -242,14 +244,15 @@ fn main() -> std::io::Result<()> {
                 }
             }
 
-            server.write_all(
-                &SerializedDataContainer::from_serializable_data(&Request::Execute(
-                    ExecRequest::Execute(cmd_args),
-                ))
-                .unwrap()
-                .to_one_vec(),
-            )
-            .unwrap();
+            server
+                .write_all(
+                    &SerializedDataContainer::from_serializable_data(&Request::Execute(
+                        ExecRequest::Execute(cmd_args),
+                    ))
+                    .unwrap()
+                    .to_one_vec(),
+                )
+                .unwrap();
 
             false
         }
@@ -259,14 +262,15 @@ fn main() -> std::io::Result<()> {
                 mount_list.and_then(|mount_list| mount_list.try_convert_to_remote_path(&arg));
 
             if let Some(path) = path {
-                server.write_all(
-                    &SerializedDataContainer::from_serializable_data(&Request::Execute(
-                        ExecRequest::Open(path),
-                    ))
-                    .unwrap()
-                    .to_one_vec(),
-                )
-                .unwrap();
+                server
+                    .write_all(
+                        &SerializedDataContainer::from_serializable_data(&Request::Execute(
+                            ExecRequest::Open(path),
+                        ))
+                        .unwrap()
+                        .to_one_vec(),
+                    )
+                    .unwrap();
             } else {
                 panic!("[Error] your specified path is not located on subdir of mount point.");
             }
@@ -297,14 +301,15 @@ fn main() -> std::io::Result<()> {
         Mode::GetEnvVar => {
             let key = args[2].clone();
 
-            server.write_all(
-                &SerializedDataContainer::from_serializable_data(&Request::Execute(
-                    ExecRequest::GetEnvVar(key),
-                ))
-                .unwrap()
-                .to_one_vec(),
-            )
-            .unwrap();
+            server
+                .write_all(
+                    &SerializedDataContainer::from_serializable_data(&Request::Execute(
+                        ExecRequest::GetEnvVar(key),
+                    ))
+                    .unwrap()
+                    .to_one_vec(),
+                )
+                .unwrap();
 
             true
         }
@@ -315,14 +320,15 @@ fn main() -> std::io::Result<()> {
                 (Some(args[2].clone()), args[3].clone())
             };
 
-            server.write_all(
-                &SerializedDataContainer::from_serializable_data(&Request::Notification(
-                    NTFRequest::Notification(title, body),
-                ))
-                .unwrap()
-                .to_one_vec(),
-            )
-            .unwrap();
+            server
+                .write_all(
+                    &SerializedDataContainer::from_serializable_data(&Request::Notification(
+                        NTFRequest::Notification(title, body),
+                    ))
+                    .unwrap()
+                    .to_one_vec(),
+                )
+                .unwrap();
 
             false
         }
