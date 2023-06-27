@@ -3,4 +3,3 @@ pub const SERVER_PORT: u16 = 12345;
 pub const ETH_NAME: &str = "eth0";
 pub const IPV4_PREFIX_LIST: [&str; 2] = ["172", "192"];
 pub const IPV6_PREFIX: &str = "fe80::";
-pub const FALLBACK_HOST_NAME: &str = "archlinux";

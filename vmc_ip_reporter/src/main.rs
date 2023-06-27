@@ -1,14 +1,14 @@
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use std::{env, thread, time};
+use std::{thread, time};
 use std::{process::Command, str};
 use vmc_common::protocol::server_negotiation;
 use vmc_common::types::PortforwardList;
 use vmc_common::{
     protocol::{NSRequest, Request},
     types::{AutoReConnectTcpStream, MachineInfo, SerializedDataContainer},
-    ETH_NAME, FALLBACK_HOST_NAME, IPV4_PREFIX_LIST, IPV6_PREFIX, SERVER_HOST, SERVER_PORT,
+    ETH_NAME, IPV4_PREFIX_LIST, IPV6_PREFIX, SERVER_HOST, SERVER_PORT,
 };
 
 #[cfg(not(target_os = "windows"))]
