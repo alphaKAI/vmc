@@ -2,6 +2,7 @@ pub mod port_forward;
 
 use chrono::Local;
 use std::io::prelude::*;
+use std::sync::mpsc::{channel, Sender};
 use std::{
     collections::HashMap,
     net::TcpListener,
@@ -23,7 +24,7 @@ use winrt_notification::Toast;
 use log::info;
 use std::env;
 
-use crate::port_forward::spawn_new_port_forward_thread;
+use crate::port_forward::{spawn_new_port_forward_thread, PortforwardRequest};
 
 #[derive(Debug)]
 struct IpAddrPair {
@@ -74,10 +75,20 @@ fn main() {
     let forward_map: Arc<Mutex<HashMap<String, PortforwardList>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
+    // port -> (dst_ip, handle).
+    // query by port -> compare given dst_ip and wanted dst_ip.
+    // if not eq -> stop thread by sending req via the handle.
+    // if eq nothing to do.
+    let spawned_forward_thread_channel: Arc<
+        Mutex<HashMap<u16, (String, Sender<PortforwardRequest>)>>,
+    > = Arc::new(Mutex::new(HashMap::new()));
+
     for client in server.incoming().flatten() {
         let mmap = mmap.clone();
         let mut client = client.try_clone().unwrap();
         let forward_map = forward_map.clone();
+        let spawned_forward_thread_channel = spawned_forward_thread_channel.clone();
+
         thread::spawn(move || {
             if let Ok(sdc) = SerializedDataContainer::from_reader(&mut client) {
                 let req = sdc.to_serializable_data::<Request>().unwrap();
@@ -129,12 +140,16 @@ fn main() {
                         Request::NameService(ns) => match ns {
                             NSRequest::Heartbeat(mi, given_forward_list) => {
                                 info!("NSRequest::Heartbeat({mi:?}, {given_forward_list:?})");
-                                let mut mmap = mmap.lock().unwrap();
-                                info!("New MachineInfo registered! : {:?}", &mi);
-                                mmap.insert(
-                                    mi.hostname.clone(),
-                                    IpAddrPair::new(mi.ipv4_addr.clone(), mi.ipv6_addr),
-                                );
+                                {
+                                    let mut mmap = mmap.lock().unwrap();
+                                    info!("New MachineInfo registered! : {:?}", &mi);
+                                    mmap.insert(
+                                        mi.hostname.clone(),
+                                        IpAddrPair::new(mi.ipv4_addr.clone(), mi.ipv6_addr),
+                                    );
+                                }
+
+                                info!("NSRequest::Heartbeat start tasks for port forwarding");
 
                                 let new_forward_list = {
                                     let mut forward_map = forward_map
@@ -155,8 +170,41 @@ fn main() {
                                     let dst_ip = mi.ipv4_addr.clone();
                                     let dst_port = forward.guest_port;
 
-                                    spawn_new_port_forward_thread(src_port, dst_ip, dst_port);
+                                    let mut spawn_thread = false;
+
+                                    let mut spawned_forward_thread_channel =
+                                        spawned_forward_thread_channel.lock().unwrap();
+
+                                    // condition of should start port forward thread is
+                                    //  - case 1: no threads are spawned
+                                    //  - case 2: threads are spawned but dst_ip is changed, need
+                                    //  to be restarted.
+                                    if let Some(elem) =
+                                        spawned_forward_thread_channel.get_mut(&src_port)
+                                    {
+                                        let (ref current_dst_ip, ref req) = elem;
+                                        if *current_dst_ip != dst_ip {
+                                            // ip changed
+                                            spawn_thread = true;
+                                            req.send(PortforwardRequest::StopServer).expect(
+                                                "failed to send PortforwardRequest::StopServer",
+                                            );
+                                        }
+                                    } else {
+                                        spawn_thread = true;
+                                    }
+
+                                    if spawn_thread {
+                                        let (req, res) = channel();
+                                        spawned_forward_thread_channel
+                                            .insert(src_port, (dst_ip.clone(), req.clone()));
+                                        spawn_new_port_forward_thread(
+                                            src_port, dst_ip, dst_port, req, res,
+                                        );
+                                    }
                                 }
+
+                                info!("NSRequest::Heartbeat end tasks for port forwarding");
                             }
                             NSRequest::QueryIp(hostname) => {
                                 info!("NSRequest::QueryIp({hostname:?})");
