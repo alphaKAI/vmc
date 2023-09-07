@@ -1,4 +1,3 @@
-#![feature(io_error_more)]
 use std::io::prelude::*;
 use std::net::TcpStream;
 use vmc_common::{

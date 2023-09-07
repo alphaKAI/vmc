@@ -1,4 +1,3 @@
-#![feature(io_error_more)]
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
 use std::path::Path;
@@ -357,7 +356,7 @@ fn main() -> std::io::Result<()> {
         }
     } else {
         return Err(std::io::Error::new(
-            std::io::ErrorKind::NetworkUnreachable,
+            std::io::ErrorKind::ConnectionRefused,
             "Failed to recv response from server",
         ));
     }
