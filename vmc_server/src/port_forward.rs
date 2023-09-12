@@ -116,7 +116,7 @@ pub fn spawn_new_port_forward_thread(
         });
     }
 
-    loop {
+    thread::spawn(move || loop {
         match recv.recv().expect("failed to unwrap PortforwardRequest") {
             PortforwardRequest::NewClient {
                 header,
@@ -132,5 +132,5 @@ pub fn spawn_new_port_forward_thread(
                 return;
             }
         }
-    }
+    });
 }
