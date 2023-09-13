@@ -1,8 +1,8 @@
 pub mod port_forward;
 
-use chrono::Local;
+use std::collections::HashSet;
 use std::io::prelude::*;
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::channel;
 use std::{
     collections::HashMap,
     net::TcpListener,
@@ -11,7 +11,6 @@ use std::{
     thread,
 };
 use vmc_common::protocol::calc_protocol_digest;
-use vmc_common::types::PortforwardList;
 use vmc_common::{
     protocol::{
         CBRequest, CBResponse, ExecRequest, ExecResponse, NSRequest, NSResponse, NTFRequest,
@@ -24,7 +23,7 @@ use winrt_notification::Toast;
 use log::info;
 use std::env;
 
-use crate::port_forward::{spawn_new_port_forward_thread, PortforwardRequest};
+use crate::port_forward::{spawn_pf_front_server, start_port_forward_service, PortforwardRequest};
 
 #[derive(Debug)]
 struct IpAddrPair {
@@ -72,22 +71,16 @@ fn main() {
 
     let mmap = Arc::new(Mutex::new(MachineMap::default()));
 
-    let forward_map: Arc<Mutex<HashMap<String, PortforwardList>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let (pf_req, pf_recv) = channel();
+    start_port_forward_service(pf_recv);
 
-    // port -> (dst_ip, handle).
-    // query by port -> compare given dst_ip and wanted dst_ip.
-    // if not eq -> stop thread by sending req via the handle.
-    // if eq nothing to do.
-    let spawned_forward_thread_channel: Arc<
-        Mutex<HashMap<u16, (String, Sender<PortforwardRequest>)>>,
-    > = Arc::new(Mutex::new(HashMap::new()));
+    let forward_port_set = Arc::new(Mutex::new(HashSet::new()));
 
     for client in server.incoming().flatten() {
         let mmap = mmap.clone();
         let mut client = client.try_clone().unwrap();
-        let forward_map = forward_map.clone();
-        let spawned_forward_thread_channel = spawned_forward_thread_channel.clone();
+        let forward_port_set = forward_port_set.clone();
+        let pf_req = pf_req.clone();
 
         thread::spawn(move || {
             if let Ok(sdc) = SerializedDataContainer::from_reader(&mut client) {
@@ -116,12 +109,12 @@ fn main() {
                     return;
                 }
             } else {
-                println!("Connection closed.");
+                println!("VMC Client Disconnected.");
                 return;
             }
 
             loop {
-                info!("[{}] Data arrives from {:?}", Local::now(), client);
+                info!("Data arrives from {:?}", client);
 
                 if let Ok(sdc) = SerializedDataContainer::from_reader(&mut client) {
                     let req = sdc.to_serializable_data::<Request>().unwrap();
@@ -149,62 +142,33 @@ fn main() {
                                     );
                                 }
 
-                                info!("NSRequest::Heartbeat start tasks for port forwarding");
-
-                                let new_forward_list = {
-                                    let mut forward_map = forward_map
-                                        .lock()
-                                        .expect("failed to aquire lock of forward_map");
-                                    if !forward_map.contains_key(&mi.hostname) {
-                                        forward_map.insert(
-                                            mi.hostname.clone(),
-                                            PortforwardList::new(vec![]),
-                                        );
-                                    }
-                                    let forward_list = forward_map.get_mut(&mi.hostname).unwrap();
-                                    forward_list.merge_elem(&given_forward_list)
-                                };
-
-                                for forward in new_forward_list.iter() {
+                                for forward in given_forward_list.forwards {
                                     let src_port = forward.host_port;
-                                    let dst_ip = mi.ipv4_addr.clone();
+                                    let dst_ip = mi
+                                        .ipv4_addr
+                                        .clone()
+                                        .parse()
+                                        .expect("failed to parse Port Forward dst ip");
                                     let dst_port = forward.guest_port;
 
-                                    let mut spawn_thread = false;
-
-                                    let mut spawned_forward_thread_channel =
-                                        spawned_forward_thread_channel.lock().unwrap();
-
-                                    // condition of should start port forward thread is
-                                    //  - case 1: no threads are spawned
-                                    //  - case 2: threads are spawned but dst_ip is changed, need
-                                    //  to be restarted.
-                                    if let Some(elem) =
-                                        spawned_forward_thread_channel.get_mut(&src_port)
-                                    {
-                                        let (ref current_dst_ip, ref req) = elem;
-                                        if *current_dst_ip != dst_ip {
-                                            // ip changed
-                                            spawn_thread = true;
-                                            req.send(PortforwardRequest::StopServer).expect(
-                                                "failed to send PortforwardRequest::StopServer",
-                                            );
-                                        }
-                                    } else {
-                                        spawn_thread = true;
-                                    }
-
-                                    if spawn_thread {
-                                        let (req, res) = channel();
-                                        spawned_forward_thread_channel
-                                            .insert(src_port, (dst_ip.clone(), req.clone()));
-                                        spawn_new_port_forward_thread(
-                                            src_port, dst_ip, dst_port, req, res,
+                                    pf_req
+                                        .send(PortforwardRequest::UpdateRoutingRule {
+                                            src_port,
+                                            dst_ip,
+                                            dst_port,
+                                        })
+                                        .expect(
+                                            "failed to send PortforwardRequest::UpdateRoutingRule",
                                         );
+                                    let mut forward_port_set = forward_port_set
+                                        .lock()
+                                        .expect("failed to aquire lock of forward_port_set");
+                                    if !forward_port_set.contains(&src_port) {
+                                        forward_port_set.insert(src_port);
+
+                                        spawn_pf_front_server(src_port, pf_req.clone());
                                     }
                                 }
-
-                                info!("NSRequest::Heartbeat end tasks for port forwarding");
                             }
                             NSRequest::QueryIp(hostname) => {
                                 info!("NSRequest::QueryIp({hostname:?})");
@@ -343,7 +307,7 @@ fn main() {
                         },
                     }
                 } else {
-                    info!("Connection closed.");
+                    info!("VMC Client Disconnected.");
                     return;
                 }
             }
